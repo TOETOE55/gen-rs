@@ -1,8 +1,6 @@
 use std::marker::PhantomPinned;
 use std::mem;
-use std::pin::Pin;
 use std::ptr::NonNull;
-use std::panic::catch_unwind;
 
 extern "C" {
     #[no_mangle]
@@ -103,7 +101,7 @@ struct UnwrapGen<'a, A, B> {
     state: GenState,
     ctx: ucontext,
     stack: Option<Vec<u8>>,
-    send: A,
+    send: Option<A>,
     co: NonNull<UnwrapGen<'a, B, A>>,
     f: Option<Box<dyn for<'g> FnMut(&'g mut Gen<A, B>, B) + 'a>>,
     _pin: PhantomPinned,
@@ -119,7 +117,7 @@ impl<'a, A, B> Gen<'a, A, B> {
             state: GenState::Yield,
             ctx: unsafe { mem::MaybeUninit::uninit().assume_init() },
             stack: Some(vec![0; DEFAULT_STACK_SIZE]),
-            send: unsafe { mem::MaybeUninit::uninit().assume_init() },
+            send: None,
             co: NonNull::dangling(),
             f: None,
             _pin: PhantomPinned,
@@ -129,13 +127,13 @@ impl<'a, A, B> Gen<'a, A, B> {
             state: GenState::Yield,
             ctx: unsafe { mem::MaybeUninit::uninit().assume_init() },
             stack: None,
-            send: unsafe { mem::MaybeUninit::uninit().assume_init() },
+            send: None,
             co: NonNull::from(&*gen),
             f: Some(f),
             _pin: PhantomPinned,
         });
 
-        co_gen.ctx.uc_stack.ss_sp = 0 as *mut _;
+        co_gen.ctx.uc_stack.ss_sp = std::ptr::null_mut();
         gen.co = NonNull::from(&*co_gen);
         gen.ctx.uc_stack.ss_sp = gen.stack.as_mut().unwrap().as_mut_ptr() as *mut _;
         gen.ctx.uc_stack.ss_size = DEFAULT_STACK_SIZE as size_t;
@@ -146,9 +144,7 @@ impl<'a, A, B> Gen<'a, A, B> {
             getcontext(&mut gen.ctx as *mut _);
             makecontext(
                 &mut gen.ctx as *mut _,
-                mem::transmute(Some(
-                    launch as unsafe fn(*mut UnwrapGen<B, A>),
-                )),
+                mem::transmute(Some(launch::<A, B> as unsafe fn(*mut UnwrapGen<B, A>))),
                 1,
                 Box::into_raw(co_gen),
             );
@@ -161,9 +157,9 @@ impl<'a, A, B> Gen<'a, A, B> {
         match self.gen.state {
             GenState::Complete => None,
             GenState::Yield => unsafe {
-                mem::replace(&mut self.gen.send, x);
-                swapcontext(&mut self.gen.co.as_mut().ctx, &mut self.gen.ctx);
-                Some(mem::replace(&mut self.gen.co.as_mut().send, mem::MaybeUninit::uninit().assume_init()))
+                self.gen.send.replace(x);
+                swapcontext(&mut self.gen.co.as_mut().ctx, &self.gen.ctx);
+                self.gen.co.as_mut().send.take()
             },
         }
     }
@@ -171,10 +167,11 @@ impl<'a, A, B> Gen<'a, A, B> {
 
 unsafe fn launch<A, B>(g: *mut UnwrapGen<B, A>) {
     let mut gen: Gen<B, A> = Gen {
-        gen: Box::from_raw(g) ,
+        gen: Box::from_raw(g),
     };
-    let start = mem::replace(&mut gen.gen.co.as_mut().send, mem::MaybeUninit::uninit().assume_init());
-    gen.gen.as_mut().f.take().unwrap()(&mut gen, start);
+    let start = gen.gen.co.as_mut().send.take().unwrap();
+    let mut f = gen.gen.as_mut().f.take().unwrap();
+    f(&mut gen, start);
     gen.gen.co.as_mut().state = GenState::Complete;
 
     mem::forget(gen);
