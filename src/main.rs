@@ -273,8 +273,16 @@ fn main() {
 */
 
 fn main() {
-    let mut x = Gen::new(|gen, _| {
-        gen.resume(2);
-    });
-    x.resume(1);
+    let mut x = 1;
+    {
+        let mut gen = Gen::new(|gen, start| {
+            println!("start {}", start);
+            x += 1;
+            println!("here {:?}", gen.resume(1));
+            x += 1;
+        });
+        println!("there {:?}", gen.resume(100));
+        println!("there {:?}", gen.resume(99));
+    }
+    println!("{}", x);
 }

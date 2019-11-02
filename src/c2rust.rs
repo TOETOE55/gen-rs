@@ -95,27 +95,33 @@ enum GenState {
     Yield,
 }
 
-pub struct Gen<A, B> {
-    gen: Box<UnwrapGen<A, B>>,
+pub struct Gen<'a, A, B> {
+    gen: Box<UnwrapGen<'a, A, B>>,
 }
 
-struct UnwrapGen<A, B> {
+struct UnwrapGen<'a, A, B> {
     state: GenState,
     ctx: ucontext,
     stack: Option<Vec<u8>>,
     send: A,
-    co: NonNull<UnwrapGen<B, A>>,
+    co: NonNull<UnwrapGen<'a, B, A>>,
+    f: Option<Box<dyn for<'g> FnMut(&'g mut Gen<A, B>, B) + 'a>>,
     _pin: PhantomPinned,
 }
 
-impl<A, B> Gen<A, B> {
-    pub fn new(f: for<'g> fn(&'g mut Gen<B, A>, A)) -> Self {
+impl<'a, A, B> Gen<'a, A, B> {
+    pub fn new<F>(f: F) -> Self
+    where
+        F: for<'g> FnMut(&'g mut Gen<B, A>, A) + 'a,
+    {
+        let f = Box::new(f) as Box<dyn for<'g> FnMut(&'g mut Gen<B, A>, A) + 'a>;
         let mut gen = Box::new(UnwrapGen {
             state: GenState::Yield,
             ctx: unsafe { mem::MaybeUninit::uninit().assume_init() },
             stack: Some(vec![0; DEFAULT_STACK_SIZE]),
             send: unsafe { mem::MaybeUninit::uninit().assume_init() },
             co: NonNull::dangling(),
+            f: None,
             _pin: PhantomPinned,
         });
 
@@ -125,6 +131,7 @@ impl<A, B> Gen<A, B> {
             stack: None,
             send: unsafe { mem::MaybeUninit::uninit().assume_init() },
             co: NonNull::from(&*gen),
+            f: Some(f),
             _pin: PhantomPinned,
         });
 
@@ -140,11 +147,10 @@ impl<A, B> Gen<A, B> {
             makecontext(
                 &mut gen.ctx as *mut _,
                 mem::transmute(Some(
-                    launch as unsafe fn(*mut UnwrapGen<B, A>, for<'g> fn(&'g mut Gen<B, A>, A)),
+                    launch as unsafe fn(*mut UnwrapGen<B, A>),
                 )),
-                2,
+                1,
                 Box::into_raw(co_gen),
-                f,
             );
         }
 
@@ -163,21 +169,21 @@ impl<A, B> Gen<A, B> {
     }
 }
 
-unsafe fn launch<A, B>(g: *mut UnwrapGen<B, A>, f: for<'g> fn(&'g mut Gen<B, A>, A)) {
+unsafe fn launch<A, B>(g: *mut UnwrapGen<B, A>) {
     let mut gen: Gen<B, A> = Gen {
         gen: Box::from_raw(g) ,
     };
     let start = mem::replace(&mut gen.gen.co.as_mut().send, mem::MaybeUninit::uninit().assume_init());
-    f(&mut gen, start);
+    gen.gen.as_mut().f.take().unwrap()(&mut gen, start);
     gen.gen.co.as_mut().state = GenState::Complete;
 
     mem::forget(gen);
 }
 
-impl<A, B> Drop for Gen<A, B> {
+impl<'a, A, B> Drop for Gen<'a, A, B> {
     fn drop(&mut self) {
         unsafe {
-            Box::from_raw(self.gen.co.as_ptr())
-        };
+            Box::from_raw(self.gen.co.as_ptr());
+        }
     }
 }
