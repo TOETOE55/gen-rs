@@ -12,8 +12,8 @@
 
 mod c2rust;
 mod gen;
-use std::ptr;
 use crate::c2rust::Gen;
+use std::ptr;
 /*
 const DEFAULT_STACK_SIZE: usize = 1024 * 1024 * 2;
 const MAX_THREADS: usize = 4;
@@ -273,7 +273,7 @@ fn main() {
 */
 
 fn main() {
-    let mut x = Gen::new(|gen| {
+    let mut x = Gen::new(|gen, _| {
         gen.resume(2);
     });
     x.resume(1);
