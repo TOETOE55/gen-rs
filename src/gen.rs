@@ -2,6 +2,15 @@ use std::marker::PhantomPinned;
 use std::ptr;
 use std::ptr::NonNull;
 
+global_asm!{
+    include_str!("context.s")
+}
+
+extern "C" {
+    fn switch_ctx(old: *mut Ctx, new: *const Ctx);
+    fn set_ctx(new: *const Ctx) -> !;
+}
+
 pub struct Gen<'a, A, B> {
     gen: Box<UnwrapGen<'a, A, B>>,
 }
@@ -36,54 +45,6 @@ struct UnwrapGen<'a, A, B> {
     _pin: PhantomPinned,
 }
 
-#[naked]
-#[inline(never)]
-unsafe fn switch_ctx(old: *mut Ctx, new: *const Ctx) {
-    asm!("
-        mov     %rsp, 0x00($0)
-        mov     %r15, 0x08($0)
-        mov     %r14, 0x10($0)
-        mov     %r13, 0x18($0)
-        mov     %r12, 0x20($0)
-        mov     %rbx, 0x28($0)
-        mov     %rbp, 0x30($0)
-
-        mov     0x00($1), %rsp
-        mov     0x08($1), %r15
-        mov     0x10($1), %r14
-        mov     0x18($1), %r13
-        mov     0x20($1), %r12
-        mov     0x28($1), %rbx
-        mov     0x30($1), %rbp
-        mov     0x38($1), %rdi
-        ret
-        "
-        : "=*m"(old)
-        : "r"(new)
-        :
-        : "volatile", "alignstack"
-    );
-}
-
-#[naked]
-#[inline(never)]
-unsafe fn set_ctx(new: *const Ctx) {
-    asm!("
-        mov     0x00($0), %rsp
-        mov     0x08($0), %r15
-        mov     0x10($0), %r14
-        mov     0x18($0), %r13
-        mov     0x20($0), %r12
-        mov     0x28($0), %rbx
-        mov     0x30($0), %rbp
-        ret
-        "
-        :
-        : "r"(new)
-        :
-        : "volatile", "alignstack"
-    );
-}
 
 impl<'a, A, B> Gen<'a, A, B> {
     pub fn new<F>(f: F) -> Self
@@ -138,7 +99,7 @@ impl<'a, A, B> Gen<'a, A, B> {
     }
 }
 
-unsafe fn launch<A, B>(gen: u64) {
+unsafe fn launch<A, B>(gen: u64) -> ! {
     let gen = gen as *mut UnwrapGen<B, A>;
     let mut gen: Gen<B, A> = Gen {
         gen: Box::from_raw(gen),
@@ -151,7 +112,7 @@ unsafe fn launch<A, B>(gen: u64) {
 
     gen.gen.co.as_mut().state = GenState::Complete;
 
-    set_ctx(&gen.gen.ctx as *const _);
+    set_ctx(&gen.gen.ctx as *const _)
 }
 
 impl<'a, A, B> Drop for Gen<'a, A, B> {
