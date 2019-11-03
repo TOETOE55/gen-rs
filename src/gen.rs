@@ -2,8 +2,14 @@ use std::marker::PhantomPinned;
 use std::ptr;
 use std::ptr::NonNull;
 
+#[cfg(not(target_os="windows"))]
 global_asm!{
-    include_str!("context.s")
+    include_str!("context_linux.s")
+}
+
+#[cfg(target_os="windows")]
+global_asm!{
+    include_str!("context_windows.s")
 }
 
 extern "C" {
@@ -16,6 +22,8 @@ pub struct Gen<'a, A, B> {
 }
 
 const DEFAULT_STACK_SIZE: usize = 1024 * 1024;
+
+#[cfg(not(target_os="windows"))]
 #[derive(Debug, Default, Clone, Copy)]
 #[repr(C)]
 struct Ctx {
@@ -26,6 +34,34 @@ struct Ctx {
     r12: u64,
     rbx: u64,
     rbp: u64,
+    gen_ptr: u64,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Default, Clone, Copy)]
+#[repr(C)]
+struct Ctx {
+    xmm6: [u64; 2],
+    xmm7: [u64; 2],
+    xmm8: [u64; 2],
+    xmm9: [u64; 2],
+    xmm10: [u64; 2],
+    xmm11: [u64; 2],
+    xmm12: [u64; 2],
+    xmm13: [u64; 2],
+    xmm14: [u64; 2],
+    xmm15: [u64; 2],
+    rsp: u64,
+    r15: u64,
+    r14: u64,
+    r13: u64,
+    r12: u64,
+    rbx: u64,
+    rbp: u64,
+    rdi: u64,
+    rsi: u64,
+    stack_start: u64,
+    stack_end: u64,
     gen_ptr: u64,
 }
 

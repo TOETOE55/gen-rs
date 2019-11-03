@@ -1,8 +1,4 @@
-#![feature(asm)]
-#![feature(global_asm)]
-
-mod gen;
-use crate::gen::Gen;
+use gen_rs::Gen;
 
 fn main() {
     let mut fib_gen = Gen::new(|gen, _| {
@@ -16,7 +12,9 @@ fn main() {
         gen.resume(an_1);
     });
 
+    let mut i: usize = 0;
     while let Some(fib) = fib_gen.resume(()) {
-        println!("{}", fib);
+        println!("fib({}) = {}", i, fib);
+        i += 1;
     }
 }
