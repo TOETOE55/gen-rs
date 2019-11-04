@@ -25,6 +25,7 @@ switch_ctx:
     mov         %rax, 0xe8(%rcx)
     mov         %gs:0x10, %rax
     mov         %rax, 0xf0(%rcx)
+//    mov         %rcx, 0xf8(%rdx)
 
     movaps      0x00(%rdx), %xmm6
     movaps      0x10(%rdx), %xmm7
@@ -46,10 +47,11 @@ switch_ctx:
     mov         0xd8(%rdx), %rdi
     mov         0xe0(%rdx), %rsi
     mov         0xe8(%rdx), %rax
+
+    mov         0xf8(%rdx), %rcx
     mov         %rax, %gs:0x08
     mov         0xf0(%rdx), %rax
     mov         %rax, %gs:0x10
-    mov         0xf8(%rdx), %rcx
 
     ret
 
