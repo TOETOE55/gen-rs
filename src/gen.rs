@@ -5,16 +5,7 @@ use std::ptr::NonNull;
 use std::ptr;
 use std::mem::ManuallyDrop;
 
-#[cfg(not(target_os = "windows"))]
-global_asm! {
-    include_str!("asm/context_linux.s")
-}
-
-#[cfg(target_os = "windows")]
-global_asm! {
-    include_str!("asm/context_windows.s")
-}
-
+#[link(name = "asm", kind = "static")]
 extern "C" {
     fn switch_ctx(old: *mut Ctx, new: *const Ctx);
     fn set_ctx(new: *const Ctx) -> !;

@@ -1,6 +1,7 @@
-.global switch_ctx
-.global set_ctx
-
+.text
+.globl switch_ctx
+.type switch_ctx,@function
+.align 16
 switch_ctx:
     mov     %rsp, 0x00(%rdi)
     mov     %r15, 0x08(%rdi)
@@ -19,7 +20,12 @@ switch_ctx:
     mov     0x30(%rsi), %rbp
     mov     0x38(%rsi), %rdi
     ret
+.size switch_ctx,.-switch_ctx
 
+.text
+.globl set_ctx
+.type set_ctx,@function
+.align 16
 set_ctx:
     mov     0x00(%rdi), %rsp
     mov     0x08(%rdi), %r15
@@ -29,3 +35,6 @@ set_ctx:
     mov     0x28(%rdi), %rbx
     mov     0x30(%rdi), %rbp
     ret
+.size set_ctx,.-set_ctx
+
+.section .note.GNU-stack,"",%progbits

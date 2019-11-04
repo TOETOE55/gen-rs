@@ -1,7 +1,12 @@
-.global switch_ctx
-.global set_ctx
+.file	"asm_x86_64_ms_pe_gas.asm"
 
+.text
+.p2align 4,,15
+.globl	switch_ctx
+.def	switch_ctx;	.scl	2;	.type	32;	.endef
+.seh_proc	switch_ctx
 switch_ctx:
+.seh_endprologue
     movaps      %xmm6, 0x00(%rcx)
     movaps      %xmm7, 0x10(%rcx)
     movaps      %xmm8, 0x20(%rcx)
@@ -25,7 +30,6 @@ switch_ctx:
     mov         %rax, 0xe8(%rcx)
     mov         %gs:0x10, %rax
     mov         %rax, 0xf0(%rcx)
-//    mov         %rcx, 0xf8(%rdx)
 
     movaps      0x00(%rdx), %xmm6
     movaps      0x10(%rdx), %xmm7
@@ -46,16 +50,27 @@ switch_ctx:
     mov         0xd0(%rdx), %rbp
     mov         0xd8(%rdx), %rdi
     mov         0xe0(%rdx), %rsi
-    mov         0xe8(%rdx), %rax
 
-    mov         0xf8(%rdx), %rcx
+    mov         0xe8(%rdx), %rax
     mov         %rax, %gs:0x08
     mov         0xf0(%rdx), %rax
     mov         %rax, %gs:0x10
+    mov         0xf8(%rdx), %rcx
 
     ret
+.seh_endproc
 
+.section .drectve
+.ascii " -export:\"switch_ctx\""
+
+
+.text
+.p2align 4,,15
+.globl	set_ctx
+.def	set_ctx;	.scl	2;	.type	32;	.endef
+.seh_proc	set_ctx
 set_ctx:
+.seh_endprologue
     movaps      0x00(%rcx), %xmm6
     movaps      0x10(%rcx), %xmm7
     movaps      0x20(%rcx), %xmm8
@@ -80,3 +95,7 @@ set_ctx:
     mov         0xf0(%rcx), %rax
     mov         %rax, %gs:0x10
     ret
+.seh_endproc
+
+.section .drectve
+.ascii " -export:\"set_ctx\""
