@@ -1,6 +1,6 @@
 extern crate cc;
-use std::path::PathBuf;
 use std::env;
+use std::path::PathBuf;
 
 fn main() {
     // for the stable build asm lib
