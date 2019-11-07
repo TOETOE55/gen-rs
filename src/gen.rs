@@ -1,5 +1,4 @@
 use std::any::Any;
-use std::marker::{PhantomData, PhantomPinned};
 use std::mem::ManuallyDrop;
 use std::panic::{catch_unwind, resume_unwind, RefUnwindSafe};
 use std::ptr;
@@ -12,8 +11,7 @@ extern "C" {
 }
 
 pub struct Gen<'a, A, B> {
-    gen: NonNull<UnwrapGen<'a, A, B>>,
-    _marker: PhantomData<Box<UnwrapGen<'a, A, B>>>,
+    gen: Box<UnwrapGen<'a, A, B>>,
 }
 
 const DEFAULT_STACK_SIZE: usize = 1024 * 1024;
@@ -78,28 +76,24 @@ struct UnwrapGen<'a, A, B> {
     _stack: Option<Vec<u8>>,
     send: Option<A>,
     co: NonNull<UnwrapGen<'a, B, A>>,
-    f: Option<Box<dyn for<'g> FnMut(&'g mut Gen<B, A>, A) + 'a>>,
+    f: Option<Box<dyn for<'g> FnOnce(&'g mut Gen<'a, B, A>, A) + 'a>>,
     panic: Option<Box<dyn Any + Send + 'static>>,
-    _pin: PhantomPinned,
 }
 
 impl<'a, A, B> Gen<'a, A, B> {
     pub fn new<F>(f: F) -> Self
     where
-        F: for<'g> FnMut(&'g mut Gen<B, A>, A) + 'a,
+        F: for<'g> FnOnce(&'g mut Gen<'a, B, A>, A) + 'a,
     {
         let mut stack = vec![0; DEFAULT_STACK_SIZE];
         let stack_ptr = stack.as_mut_ptr();
         let stack_size = stack.len();
         let (mut gen, co_gen) = dual_gen(Box::new(f), stack);
         unsafe {
-            init_ctx(&mut gen.as_mut().ctx, co_gen, stack_ptr, stack_size);
+            init_ctx(&mut gen.ctx, co_gen, stack_ptr, stack_size);
         }
 
-        Gen {
-            gen,
-            _marker: PhantomData,
-        }
+        Gen { gen }
     }
 
     pub fn resume(&mut self, x: A) -> Option<B> {
@@ -121,11 +115,11 @@ impl<'a, A, B> Gen<'a, A, B> {
 #[cfg(target_os = "windows")]
 unsafe fn init_ctx<A, B>(
     ctx: &mut Ctx,
-    co_gen: NonNull<UnwrapGen<B, A>>,
+    co_gen: Box<UnwrapGen<B, A>>,
     stack_ptr: *mut u8,
     stack_size: usize,
 ) {
-    ctx.gen_ptr = co_gen.as_ptr() as u64;
+    ctx.gen_ptr = Box::into_raw(co_gen) as u64;
     ptr::write(
         stack_ptr.add(stack_size - 32) as *mut u64,
         bootstrap::<A, B> as usize as u64,
@@ -150,9 +144,9 @@ unsafe fn init_ctx<A, B>(
 }
 
 fn dual_gen<'a, A, B>(
-    f: Box<dyn for<'g> FnMut(&'g mut Gen<B, A>, A) + 'a>,
+    f: Box<dyn for<'g> FnOnce(&'g mut Gen<'a, B, A>, A) + 'a>,
     stack: Vec<u8>,
-) -> (NonNull<UnwrapGen<A, B>>, NonNull<UnwrapGen<B, A>>) {
+) -> (Box<UnwrapGen<'a, A, B>>, Box<UnwrapGen<'a, B, A>>) {
     let mut gen = Box::new(UnwrapGen {
         state: GenState::Ready,
         ctx: Ctx::default(),
@@ -161,7 +155,6 @@ fn dual_gen<'a, A, B>(
         co: NonNull::dangling(),
         f: Some(f),
         panic: None,
-        _pin: PhantomPinned,
     });
 
     let co_gen = Box::new(UnwrapGen {
@@ -172,14 +165,10 @@ fn dual_gen<'a, A, B>(
         co: NonNull::from(&*gen),
         f: None,
         panic: None,
-        _pin: PhantomPinned,
     });
     gen.co = NonNull::from(&*co_gen);
 
-    (
-        NonNull::new(Box::into_raw(gen)).unwrap(),
-        NonNull::new(Box::into_raw(co_gen)).unwrap(),
-    )
+    (gen, co_gen)
 }
 
 unsafe fn dispatch_panic(panic: Option<Box<dyn Any + Send + 'static>>) {
@@ -195,10 +184,9 @@ unsafe fn bootstrap<A, B>(co_gen_raw: *mut UnwrapGen<B, A>) {
     (*gen).state = GenState::Yield;
     (*gen).panic = catch_unwind(move || {
         let start = (*gen).send.take().unwrap();
-        let mut f = (*gen).f.take().unwrap();
+        let f = (*gen).f.take().unwrap();
         let mut co_gen = ManuallyDrop::new(Gen {
-            gen: NonNull::new(co_gen_raw).unwrap(),
-            _marker: PhantomData,
+            gen: Box::from_raw(co_gen_raw),
         });
         f(&mut co_gen, start);
     })
@@ -212,7 +200,6 @@ unsafe fn bootstrap<A, B>(co_gen_raw: *mut UnwrapGen<B, A>) {
 impl<A, B> Drop for Gen<'_, A, B> {
     fn drop(&mut self) {
         unsafe {
-            let _gen = Box::from_raw(self.gen.as_ptr());
             let mut co_gen = Box::from_raw(self.gen.as_mut().co.as_ptr());
             if let GenState::Yield = self.gen.as_ref().state {
                 self.gen.as_mut().panic = Some(Box::new(Dropping));
