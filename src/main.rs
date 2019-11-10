@@ -4,12 +4,12 @@ fn main() {
     let fib_gen = Gen::new(|mut gen, _| {
         let mut an: u64 = 0;
         let mut an_1: u64 = 1;
+        Gen::resume(&mut gen, an);
         while let Some(an_2) = an.checked_add(an_1) {
-            Gen::resume(&mut gen, an);
             an = an_1;
             an_1 = an_2;
+            Gen::resume(&mut gen, an_1);
         }
-        Gen::resume(&mut gen, an_1);
     });
 
     for (i, ai) in fib_gen.enumerate() {
@@ -31,6 +31,6 @@ fn main() {
         // you can't get &mut Gen
     });
 
-    gen1.resume(3);
+    Gen::resume(&mut gen.as_mut(), 3);
     */
 }

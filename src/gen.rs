@@ -1,6 +1,5 @@
 use std::any::Any;
 use std::marker::PhantomPinned;
-use std::mem::ManuallyDrop;
 use std::panic::{catch_unwind, resume_unwind, RefUnwindSafe};
 use std::pin::Pin;
 use std::ptr;
@@ -63,6 +62,12 @@ enum GenState {
     Ready,
 }
 
+impl Default for GenState {
+    fn default() -> Self {
+        GenState::Yield
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 struct Dropping;
 unsafe impl Send for Dropping {}
@@ -73,12 +78,27 @@ type GenCallback<'a, Send, Recv> = Box<dyn for<'g> FnOnce(Pin<&'g mut Gen<'a, Re
 pub struct Gen<'a, Send, Recv> {
     state:  GenState,
     ctx:    Ctx,
-    _stack: Option<Vec<u8>>,
+    stack:  Option<Vec<u8>>,
     send:   Option<Send>,
     dual:   Option<NonNull<Gen<'a, Recv, Send>>>,
     cb:     Option<GenCallback<'a, Send, Recv>>,
     panic:  Option<Box<dyn Any + std::marker::Send + 'static>>,
     _pin:   PhantomPinned,
+}
+
+impl<Send, Recv> Default for Gen<'_, Send, Recv> {
+    fn default() -> Self {
+        Self {
+            state: Default::default(),
+            ctx: Default::default(),
+            stack: None,
+            send: None,
+            dual: None,
+            cb: None,
+            panic: None,
+            _pin: PhantomPinned,
+        }
+    }
 }
 
 impl<'a, Send, Recv> Gen<'a, Send, Recv> {
@@ -131,7 +151,7 @@ unsafe fn init_ctx<Send, Recv>(
         stack_ptr.add(stack_size - 32) as *mut u64,
         bootstrap::<Send, Recv> as usize as u64,
     );
-    ctx.rsp = stack_ptr.add(stack_size - 32) as u64;
+    ctx.rsp         = stack_ptr.add(stack_size - 32) as u64;
     ctx.stack_start = stack_ptr.add(stack_size) as u64
 }
 
@@ -154,30 +174,17 @@ fn dual_gen<Send, Recv>(
     cb:     GenCallback<Send, Recv>,
     stack:  Vec<u8>,
 ) -> (Pin<Box<Gen<Send, Recv>>>, Pin<Box<Gen<Recv, Send>>>) {
-    let mut gen = Box::pin(Gen {
-        state:  GenState::Ready,
-        ctx:    Ctx::default(),
-        _stack: Some(stack),
-        send:   None,
-        dual:   None,
-        cb:     Some(cb),
-        panic:  None,
-        _pin:   PhantomPinned,
-    });
-
-    let dual_gen = Box::pin(Gen {
-        state:  GenState::Yield,
-        ctx:    Ctx::default(),
-        _stack: None,
-        send:   None,
-        dual:   Some(NonNull::from(gen.as_ref().get_ref())),
-        cb:     None,
-        panic:  None,
-        _pin:   PhantomPinned,
-    });
+    let mut gen = Box::pin(Gen::default());
+    let mut dual_gen = Box::pin(Gen::default());
 
     unsafe {
-        gen.as_mut().get_unchecked_mut().dual = Some(NonNull::from(dual_gen.as_ref().get_ref()));
+        let gen_ref = gen.as_mut().get_unchecked_mut();
+        let dual_gen_ref = dual_gen.as_mut().get_unchecked_mut();
+        gen_ref.dual        = Some(NonNull::from(&*dual_gen_ref));
+        gen_ref.stack       = Some(stack);
+        gen_ref.cb          = Some(cb);
+        gen_ref.state       = GenState::Ready;
+        dual_gen_ref.dual   = Some(NonNull::from(&*gen_ref));
     }
 
     (gen, dual_gen)
@@ -191,20 +198,20 @@ fn dispatch_panic(panic: Option<Box<dyn Any + Send + 'static>>) {
 
 impl<Send, Recv> RefUnwindSafe for Gen<'_, Send, Recv> {}
 
-unsafe fn bootstrap<Send, Recv>(dual_gen_raw: *mut Gen<Recv, Send>) {
+unsafe fn bootstrap<Send, Recv>(dual_gen_raw: *mut Gen<Recv, Send>) -> ! {
     let gen_raw = (*dual_gen_raw).dual.unwrap().as_ptr();
     (*gen_raw).state = GenState::Yield;
     (*gen_raw).panic = catch_unwind(move || {
         let start = (*gen_raw).send.take().unwrap();
         let cb = (*gen_raw).cb.take().unwrap();
-        let mut dual_gen = ManuallyDrop::new(Pin::new_unchecked(Box::from_raw(dual_gen_raw)));
-        cb(dual_gen.as_mut(), start);
+        let dual_gen = Pin::new_unchecked(dual_gen_raw.as_mut().unwrap());
+        cb(dual_gen, start);
     })
     .err()
     .filter(|x| !x.is::<Dropping>());
 
     (*gen_raw).state = GenState::Complete;
-    set_ctx(&(*dual_gen_raw).ctx);
+    set_ctx(&(*dual_gen_raw).ctx)
 }
 
 impl<Send, Recv> Drop for Gen<'_, Send, Recv> {
