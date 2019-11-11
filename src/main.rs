@@ -1,14 +1,16 @@
-use gen_rs::Gen;
+use gen_rs::helper::{generator, Resume};
+
 
 fn main() {
-    let fib_gen = Gen::new(|mut gen, _| {
+    let fib_gen = generator(|gen, _| {
+        let mut re = Resume::new(gen);
         let mut an: u64 = 0;
         let mut an_1: u64 = 1;
-        Gen::resume(&mut gen, an);
+        re.resume(an);
         while let Some(an_2) = an.checked_add(an_1) {
             an = an_1;
             an_1 = an_2;
-            Gen::resume(&mut gen, an_1);
+            re.resume(an_1);
         }
     });
 
