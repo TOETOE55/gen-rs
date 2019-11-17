@@ -29,7 +29,7 @@ fn main() {
     */
     /*
     let mut gen1: Gen<_, ()> = Gen::new(move |co_gen1, _| {
-        std::mem::swap(co_gen1, &mut fib_gen);
+        std::mem::swap(co_gen1, &mut *fib_gen);
         // you can't get &mut Gen
     });
 

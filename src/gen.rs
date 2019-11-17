@@ -1,6 +1,6 @@
 use std::any::Any;
 use std::marker::PhantomPinned;
-use std::panic::{catch_unwind, resume_unwind, RefUnwindSafe};
+use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::pin::Pin;
 use std::ptr;
 use std::ptr::NonNull;
@@ -196,21 +196,20 @@ fn dispatch_panic(panic: Option<Box<dyn Any + Send + 'static>>) {
     }
 }
 
-impl<Send, Recv> RefUnwindSafe for Gen<'_, Send, Recv> {}
-
 unsafe fn bootstrap<Send, Recv>(dual_gen_raw: *mut Gen<Recv, Send>) -> ! {
-    let gen_raw = (*dual_gen_raw).dual.unwrap().as_ptr();
-    (*gen_raw).state = GenState::Yield;
-    (*gen_raw).panic = catch_unwind(move || {
-        let start = (*gen_raw).send.take().unwrap();
-        let cb = (*gen_raw).cb.take().unwrap();
+    let gen = (*dual_gen_raw).dual.as_mut().take().unwrap().as_mut();
+    gen.state = GenState::Yield;
+
+    gen.panic = catch_unwind(AssertUnwindSafe(|| {
+        let start = gen.send.take().unwrap();
+        let cb = gen.cb.take().unwrap();
         let dual_gen = Pin::new_unchecked(dual_gen_raw.as_mut().unwrap());
         cb(dual_gen, start);
-    })
+    }))
     .err()
     .filter(|x| !x.is::<Dropping>());
 
-    (*gen_raw).state = GenState::Complete;
+    gen.state = GenState::Complete;
     set_ctx(&(*dual_gen_raw).ctx)
 }
 
